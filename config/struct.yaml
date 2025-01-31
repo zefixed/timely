@@ -1,0 +1,6 @@
+env: # "local", "dev", "prod"
+storage_path: # "postgres://<user>:<pass>@<host>/<db>?sslmode=disable"
+http_server:
+  address: # "host:port"
+  timeout: # <second>s
+  idle_timeout: # <second>s
