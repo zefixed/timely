@@ -22,4 +22,10 @@ go.work
 go.work.sum
 
 # env file
-.env
+*.env
+
+# Ignore config files
+config/*.*
+
+# Not ignore struct config files
+!config/struct.*

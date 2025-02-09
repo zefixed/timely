@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"time"
 	"timely/internal/storage"
@@ -20,6 +19,12 @@ type DBAction struct {
 	UserDescription string    `json:"user_description"`
 	EventDatetime   time.Time `json:"event_datetime"`
 	Action          string    `json:"action"`
+}
+
+type User struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 func New(storagePath string) (*Storage, error) {
@@ -69,6 +74,62 @@ func (s *Storage) CreateUser(name, desc string) error {
 	return nil
 }
 
+func (s *Storage) GetUser(id int) ([]User, error) {
+	const op = "storage.postgres.GetUser"
+
+	query := `SELECT * FROM users`
+	if id != -1 {
+		query += ` WHERE id = $1`
+	}
+
+	stmt, err := s.db.Prepare(query)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	var rows *sql.Rows
+	if id != -1 {
+		rows, err = stmt.Query(id)
+	} else {
+		rows, err = stmt.Query()
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	var users []User
+
+	if !rows.Next() {
+		return nil, fmt.Errorf("%s: %w", op, storage.ErrUserNotFound)
+	}
+
+	for {
+		var user User
+		err = rows.Scan(
+			&user.ID,
+			&user.Name,
+			&user.Description,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", op, err)
+		}
+
+		users = append(users, user)
+
+		if !rows.Next() {
+			break
+		}
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	return users, nil
+}
+
 func (s *Storage) DeleteUser(id int) error {
 	const op = "storage.postgres.DeleteUser"
 
@@ -95,7 +156,7 @@ func (s *Storage) DeleteUser(id int) error {
 	return nil
 }
 
-func (s *Storage) CreateAction(uid int, action string) error {
+func (s *Storage) CreateAction(id int, action string) error {
 	const op = "storage.postgres.CreateAction"
 
 	if action != "in" && action != "out" {
@@ -107,7 +168,7 @@ func (s *Storage) CreateAction(uid int, action string) error {
 		return fmt.Errorf("%s: %w", op, err)
 	}
 
-	_, err = stmt.Exec(uid, time.Now(), action)
+	_, err = stmt.Exec(id, time.Now(), action)
 	if err != nil {
 		if pqErr, ok := err.(*pq.Error); ok {
 			if pqErr.Code == "23503" {
@@ -122,8 +183,8 @@ func (s *Storage) CreateAction(uid int, action string) error {
 	return nil
 }
 
-func (s *Storage) GetActions(uid int, eventsStart, eventsEnd time.Time, action string) ([]byte, error) {
-	// set uid = -1 to ignore user
+func (s *Storage) GetActions(id int, eventsStart, eventsEnd time.Time, action string) ([]DBAction, error) {
+	// set id = -1 to ignore user
 	// set actions = "" to ignore action
 
 	const op = "storage.postgres.GetAction"
@@ -142,11 +203,11 @@ func (s *Storage) GetActions(uid int, eventsStart, eventsEnd time.Time, action s
 		`
 
 	// TODO: get rid of duplication if statement
-	if uid != -1 && action != "" {
+	if id != -1 && action != "" {
 		query += ` AND u.id = $3 AND a.action = $4`
-	} else if uid != -1 && action == "" {
+	} else if id != -1 && action == "" {
 		query += ` AND u.id = $3`
-	} else if uid == -1 && action != "" {
+	} else if id == -1 && action != "" {
 		query += ` AND a.action = $3`
 	}
 
@@ -156,11 +217,11 @@ func (s *Storage) GetActions(uid int, eventsStart, eventsEnd time.Time, action s
 	}
 
 	var rows *sql.Rows
-	if uid != -1 && action != "" {
-		rows, err = stmt.Query(eventsStart, eventsEnd, uid, action)
-	} else if uid != -1 && action == "" {
-		rows, err = stmt.Query(eventsStart, eventsEnd, uid)
-	} else if uid == -1 && action != "" {
+	if id != -1 && action != "" {
+		rows, err = stmt.Query(eventsStart, eventsEnd, id, action)
+	} else if id != -1 && action == "" {
+		rows, err = stmt.Query(eventsStart, eventsEnd, id)
+	} else if id == -1 && action != "" {
 		rows, err = stmt.Query(eventsStart, eventsEnd, action)
 	} else {
 		rows, err = stmt.Query(eventsStart, eventsEnd)
@@ -199,10 +260,5 @@ func (s *Storage) GetActions(uid int, eventsStart, eventsEnd time.Time, action s
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
-	jsonData, err := json.MarshalIndent(actions, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", op, err)
-	}
-
-	return jsonData, nil
+	return actions, nil
 }
